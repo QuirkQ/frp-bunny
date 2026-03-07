@@ -1,0 +1,75 @@
+name: Build and Publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      frp_version:
+        description: "frp version to build (e.g. 0.61.1)"
+        required: false
+        default: ""
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-24.04
+    outputs:
+      frp_version: ${{ steps.version.outputs.frp_version }}
+      tags: ${{ steps.tags.outputs.tags }}
+
+    steps:
+      - name: Determine frp version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.frp_version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            echo "frp_version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            VERSION=$(curl -s https://api.github.com/repos/fatedier/frp/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+            echo "frp_version=$VERSION" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute tags
+        id: tags
+        env:
+          REGISTRY: ghcr.io
+          IMAGE_NAME: ${{ github.repository }}
+          FRP_VERSION: ${{ steps.version.outputs.frp_version }}
+          GIT_REF: ${{ github.ref }}
+        run: |
+          IMAGE_NAME="${IMAGE_NAME,,}"
+          MAJOR=$(echo "$FRP_VERSION" | cut -d. -f1)
+          MINOR=$(echo "$FRP_VERSION" | cut -d. -f1-2)
+
+          TAGS="${REGISTRY}/${IMAGE_NAME}:${FRP_VERSION}"
+          TAGS="${TAGS}
+          ${REGISTRY}/${IMAGE_NAME}:${MINOR}"
+          TAGS="${TAGS}
+          ${REGISTRY}/${IMAGE_NAME}:${MAJOR}"
+
+          if [ "$GIT_REF" = "refs/heads/main" ]; then
+            TAGS="${TAGS}
+          ${REGISTRY}/${IMAGE_NAME}:latest"
+          fi
+
+          echo "tags<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$TAGS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build
+    needs: prepare
+    uses: ./.github/workflows/build-image.yml
+    with:
+      frp_version: ${{ needs.prepare.outputs.frp_version }}
+      tags: ${{ needs.prepare.outputs.tags }}
+    permissions:
+      contents: read
+      packages: write

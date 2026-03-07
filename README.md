@@ -22,6 +22,8 @@ docker run -d \
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `FRP_TOKEN` | Yes | — | Auth token shared between frps and frpc |
+| `PUID` | No | `1000` | UID for the frps process |
+| `PGID` | No | `1000` | GID for the frps process |
 | `BIND_PORT` | No | `7000` | Port frpc clients connect to |
 | `MAX_PORTS_PER_CLIENT` | No | `5` | Max remote ports a single client can claim |
 | `MAX_POOL_COUNT` | No | `5` | Max connection pool size per proxy |
@@ -170,7 +172,8 @@ See the [mTLS section](#client-setup-frpc) for adding client certificate authent
 - Allowed port ranges restricted (`allowPorts`, default `10000-50000`)
 - Port claims capped per client (`maxPortsPerClient`)
 - Connection pool capped per proxy (`transport.maxPoolCount`)
-- Runs as non-root user (`frps`)
+- Runs as non-root user (`frps`) with configurable UID/GID via `PUID`/`PGID`
+- Compatible with `--user` / Kubernetes `securityContext` for rootless operation
 - Dashboard disabled by default, bound to `127.0.0.1` when enabled
 - Dashboard TLS auto-enabled when server certs are mounted
 - Vhost ports disabled by default (opt-in via env vars)

@@ -18,10 +18,11 @@ RUN mkdir -p web/frps/dist && echo '' > web/frps/dist/index.html \
 FROM alpine:${ALPINE_VERSION}
 
 RUN apk upgrade --no-cache \
-    && addgroup -S frps \
-    && adduser -S -G frps -H -s /sbin/nologin frps \
+    && apk add --no-cache su-exec \
+    && addgroup -S -g 1000 frps \
+    && adduser -S -G frps -H -s /sbin/nologin -u 1000 frps \
     && mkdir -p /etc/frp \
-    && chown frps:frps /etc/frp
+    && chmod 777 /etc/frp
 
 COPY --from=builder /usr/bin/frps /usr/bin/frps
 COPY --chmod=555 entrypoint.sh /entrypoint.sh
@@ -30,8 +31,6 @@ EXPOSE 7000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD pgrep frps > /dev/null || exit 1
-
-USER frps
 
 ENTRYPOINT ["/entrypoint.sh"]
 

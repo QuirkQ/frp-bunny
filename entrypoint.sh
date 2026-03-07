@@ -1,6 +1,32 @@
 #!/bin/sh
 set -eu
 
+# --- User setup ---
+
+PUID="${PUID:-1000}"
+PGID="${PGID:-1000}"
+
+setup_user() {
+  CUR_UID=$(id -u frps)
+  CUR_GID=$(id -g frps)
+
+  if [ "$CUR_GID" != "$PGID" ]; then
+    sed -i "s/^frps:x:${CUR_GID}:/frps:x:${PGID}:/" /etc/group
+    sed -i "s/^\(frps:[^:]*:[^:]*:\)${CUR_GID}:/\1${PGID}:/" /etc/passwd
+  fi
+
+  if [ "$CUR_UID" != "$PUID" ]; then
+    sed -i "s/^frps:\([^:]*\):${CUR_UID}:/frps:\1:${PUID}:/" /etc/passwd
+  fi
+
+  chown frps:frps /etc/frp
+}
+
+# Adjust UID/GID if running as root
+if [ "$(id -u)" = "0" ]; then
+  setup_user
+fi
+
 # --- Validation ---
 
 if [ -z "${FRP_TOKEN:-}" ]; then
@@ -147,5 +173,11 @@ if [ -n "${SUBDOMAIN_HOST:-}" ]; then
 fi
 
 chmod 400 /etc/frp/frps.toml
+chown frps:frps /etc/frp/frps.toml 2>/dev/null || true
 
-exec /usr/bin/frps -c /etc/frp/frps.toml
+# Drop to frps user if running as root, otherwise exec directly
+if [ "$(id -u)" = "0" ]; then
+  exec su-exec frps /usr/bin/frps -c /etc/frp/frps.toml
+else
+  exec /usr/bin/frps -c /etc/frp/frps.toml
+fi

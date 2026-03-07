@@ -27,6 +27,28 @@ if [ "$(id -u)" = "0" ]; then
   setup_user
 fi
 
+# --- Decode base64 certificates from env vars ---
+
+TLS_DIR="/etc/frp/tls"
+
+decode_cert() {
+  var_name="$1"
+  dest="$2"
+  mode="$3"
+
+  eval val=\${${var_name}:-}
+  if [ -n "$val" ]; then
+    mkdir -p "$TLS_DIR"
+    echo "$val" | base64 -d > "$dest"
+    chmod "$mode" "$dest"
+    chown frps:frps "$dest" 2>/dev/null || true
+  fi
+}
+
+decode_cert TLS_CERT_B64  "$TLS_DIR/server.crt" 644
+decode_cert TLS_KEY_B64   "$TLS_DIR/server.key" 600
+decode_cert TLS_CA_B64    "$TLS_DIR/ca.crt"     644
+
 # --- Validation ---
 
 if [ -z "${FRP_TOKEN:-}" ]; then

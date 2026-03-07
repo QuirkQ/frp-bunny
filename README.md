@@ -39,6 +39,9 @@ docker run -d \
 | `TLS_CERT_FILE` | No | `/etc/frp/tls/server.crt` | Server TLS certificate path |
 | `TLS_KEY_FILE` | No | `/etc/frp/tls/server.key` | Server TLS private key path |
 | `TLS_CA_FILE` | No | `/etc/frp/tls/ca.crt` | CA certificate for mTLS client verification |
+| `TLS_CERT_B64` | No | *(unset)* | Base64-encoded server certificate (alternative to mounting files) |
+| `TLS_KEY_B64` | No | *(unset)* | Base64-encoded server private key |
+| `TLS_CA_B64` | No | *(unset)* | Base64-encoded CA certificate |
 
 ## TLS and mTLS
 
@@ -92,6 +95,20 @@ docker run -d \
 The entrypoint auto-detects the mounted certs:
 - `server.crt` + `server.key` present → enables server TLS identity
 - `ca.crt` also present → enables **mTLS** (clients must present a valid certificate)
+
+Alternatively, pass certificates as base64-encoded environment variables (useful for platforms that don't support volume mounts, like Bunny Magic Containers):
+
+```bash
+docker run -d \
+  -e FRP_TOKEN=your-secret-token \
+  -e TLS_CERT_B64=$(base64 < certs/server.crt) \
+  -e TLS_KEY_B64=$(base64 < certs/server.key) \
+  -e TLS_CA_B64=$(base64 < certs/ca.crt) \
+  -p 7000:7000 \
+  ghcr.io/quirkq/frp-bunny:latest
+```
+
+The `_B64` env vars are decoded to files at startup. If both a mounted file and a `_B64` var exist, the decoded env var takes precedence.
 
 ### Client setup (frpc)
 

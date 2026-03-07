@@ -21,15 +21,29 @@ RUN apk add --no-cache busybox-extras
 
 FROM alpine:${ALPINE_VERSION}
 
+COPY --from=extras /bin/busybox-extras /bin/busybox-extras
+
 RUN apk upgrade --no-cache \
     && apk add --no-cache su-exec \
     && addgroup -S -g 1000 frps \
     && adduser -S -G frps -H -s /sbin/nologin -u 1000 frps \
     && mkdir -p /etc/frp \
-    && chmod 777 /etc/frp
-
-COPY --from=extras /bin/busybox-extras /bin/busybox-extras
-RUN ln -s /bin/busybox-extras /usr/sbin/httpd
+    && chmod 777 /etc/frp \
+    && ln -sf /bin/busybox-extras /usr/sbin/httpd \
+    && rm -rf /sbin/apk /lib/apk /etc/apk /var/cache/apk \
+    && rm -f /usr/bin/scanelf /usr/sbin/ssl_client /usr/bin/iconv /usr/bin/ldd \
+    && rm -rf /usr/lib/libcrypto* /usr/lib/libssl* /usr/lib/libapk* \
+              /usr/lib/engines-3 /usr/lib/ossl-modules /etc/ssl1.1 \
+    && rm -rf /etc/crontabs /etc/periodic /etc/logrotate.d /etc/modprobe.d \
+              /etc/modules-load.d /etc/sysctl.d /etc/sysctl.conf /etc/udhcpc \
+              /etc/network /etc/securetty /etc/inittab /etc/motd /etc/fstab \
+              /etc/services /etc/protocols /etc/profile /etc/profile.d \
+              /etc/busybox-paths.d /etc/secfixes.d /etc/opt /etc/issue \
+              /etc/shells /etc/modules \
+    && rm -rf /usr/lib/sysctl.d /usr/lib/modules-load.d \
+              /usr/share /var/spool /media /mnt /opt /srv \
+              /usr/lib/libz* /usr/lib/os-release \
+              /lib/firmware /lib/modules-load.d /lib/sysctl.d
 
 COPY --from=builder /usr/bin/frps /usr/bin/frps
 COPY --chmod=555 entrypoint.sh /entrypoint.sh

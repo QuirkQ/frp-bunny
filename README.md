@@ -4,9 +4,31 @@ Hardened [frp](https://github.com/fatedier/frp) server (`frps`) Docker image des
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    subgraph Internet
+        B["Browser<br/>site1.app.nl"]
+    end
+
+    subgraph Bunny Magic Containers
+        frps["frps<br/>:443 HTTPS vhost<br/>:7000 control"]
+    end
+
+    subgraph Your Server
+        frpc["frpc<br/>(mTLS tunnel)"]
+        Caddy["Caddy<br/>TLS termination<br/>Let's Encrypt"]
+        App1["App 1<br/>:3000"]
+        App2["App 2<br/>:4000"]
+    end
+
+    B -- "HTTPS (SNI)" --> frps
+    frps -- "mTLS + token" --> frpc
+    frpc -- "localhost" --> Caddy
+    Caddy --> App1
+    Caddy --> App2
 ```
-Browser (HTTPS) → frps (SNI routing, port 443) → frpc (client, mTLS) → Caddy → your app
-```
+
+> frps only reads the SNI hostname from the TLS ClientHello — it never sees decrypted traffic. Caddy handles TLS termination and certificate management on the client side.
 
 ## Quick Start
 

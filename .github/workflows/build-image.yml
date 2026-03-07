@@ -46,23 +46,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Detect latest stable Go version
-        id: go
+      - name: Detect latest stable Go and Alpine versions
+        id: versions
         run: |
           GO_VERSION=$(curl -sL 'https://go.dev/VERSION?m=text' | head -1 | sed 's/^go//')
-          echo "version=$GO_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Using Go $GO_VERSION"
+          ALPINE_VERSION=$(curl -s 'https://registry.hub.docker.com/v2/repositories/library/alpine/tags?page_size=100&ordering=last_updated' | jq -r '[.results[].name | select(test("^[0-9]+\\.[0-9]+$"))] | sort_by(split(".") | map(tonumber)) | last')
+          echo "go=$GO_VERSION" >> "$GITHUB_OUTPUT"
+          echo "alpine=$ALPINE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Using Go $GO_VERSION, Alpine $ALPINE_VERSION"
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: ${{ inputs.push }}
           tags: ${{ inputs.tags }}
           build-args: |
             FRP_VERSION=${{ inputs.frp_version }}
-            GO_VERSION=${{ steps.go.outputs.version }}
+            GO_VERSION=${{ steps.versions.outputs.go }}
+            ALPINE_VERSION=${{ steps.versions.outputs.alpine }}
             BUILD_DATE=${{ github.event.repository.updated_at }}
             VCS_REF=${{ github.sha }}
           cache-from: type=gha

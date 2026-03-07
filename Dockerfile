@@ -1,5 +1,6 @@
 ARG FRP_VERSION=0.61.1
 ARG GO_VERSION=1.24.13
+ARG ALPINE_VERSION=3.23
 
 FROM golang:${GO_VERSION}-alpine AS builder
 
@@ -14,7 +15,7 @@ WORKDIR /src
 RUN mkdir -p web/frps/dist && echo '' > web/frps/dist/index.html \
     && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /usr/bin/frps ./cmd/frps
 
-FROM alpine:3.23
+FROM alpine:${ALPINE_VERSION}
 
 RUN apk upgrade --no-cache \
     && addgroup -S frps \
@@ -35,6 +36,7 @@ USER frps
 ENTRYPOINT ["/entrypoint.sh"]
 
 ARG FRP_VERSION
+ARG ALPINE_VERSION
 ARG BUILD_DATE
 ARG VCS_REF
 
@@ -45,4 +47,4 @@ LABEL org.opencontainers.image.title="frp-bunny" \
     org.opencontainers.image.revision="${VCS_REF}" \
     org.opencontainers.image.vendor="QuirkQ" \
     org.opencontainers.image.licenses="Apache-2.0" \
-    org.opencontainers.image.base.name="alpine:3.23"
+    org.opencontainers.image.base.name="alpine:${ALPINE_VERSION}"

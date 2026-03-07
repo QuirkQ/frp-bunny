@@ -72,6 +72,7 @@ is_uint() {
 
 BIND_PORT="${BIND_PORT:-7000}"
 VHOST_HTTPS_PORT="${VHOST_HTTPS_PORT:-443}"
+VHOST_HTTP_PORT="${VHOST_HTTP_PORT:-80}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-7500}"
 DASHBOARD_ADDR="${DASHBOARD_ADDR:-127.0.0.1}"
 MAX_PORTS_PER_CLIENT="${MAX_PORTS_PER_CLIENT:-0}"
@@ -80,12 +81,7 @@ ALLOW_PORTS="${ALLOW_PORTS:-}"
 
 HEALTH_PORT="${HEALTH_PORT:-8080}"
 
-PORT_VARS="BIND_PORT VHOST_HTTPS_PORT DASHBOARD_PORT HEALTH_PORT"
-
-# HTTP vhost is optional — only validated/enabled if explicitly set
-if [ -n "${VHOST_HTTP_PORT:-}" ]; then
-  PORT_VARS="$PORT_VARS VHOST_HTTP_PORT"
-fi
+PORT_VARS="BIND_PORT VHOST_HTTPS_PORT VHOST_HTTP_PORT DASHBOARD_PORT HEALTH_PORT"
 
 for var in $PORT_VARS; do
   eval val=\$$var
@@ -183,13 +179,9 @@ EOF
   fi
 fi
 
-# HTTPS vhost: always enabled (SNI-based routing)
+# Vhost: HTTPS (SNI routing) + HTTP (for redirects and ACME challenges)
 echo "vhostHTTPSPort = ${VHOST_HTTPS_PORT}" >> /etc/frp/frps.toml
-
-# HTTP vhost: optional (e.g. for ACME HTTP-01 challenges)
-if [ -n "${VHOST_HTTP_PORT:-}" ]; then
-  echo "vhostHTTPPort = ${VHOST_HTTP_PORT}" >> /etc/frp/frps.toml
-fi
+echo "vhostHTTPPort = ${VHOST_HTTP_PORT}" >> /etc/frp/frps.toml
 
 # Subdomain restriction: only when explicitly set
 if [ -n "${SUBDOMAIN_HOST:-}" ]; then

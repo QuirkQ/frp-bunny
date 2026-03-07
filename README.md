@@ -35,11 +35,11 @@ flowchart LR
 ```bash
 docker run -d \
   -e FRP_TOKEN=your-secret-token \
-  -p 443:443 -p 7000:7000 \
+  -p 80:80 -p 443:443 -p 7000:7000 \
   ghcr.io/quirkq/frp-bunny:latest
 ```
 
-This starts frps with HTTPS vhost on port 443 and frpc control on port 7000. Traffic is routed by domain (SNI) — multiple sites share port 443.
+This starts frps with HTTPS vhost on 443, HTTP vhost on 80, and frpc control on 7000. Traffic is routed by domain (SNI/Host header) — multiple sites share the same ports. Caddy handles HTTP→HTTPS redirects and ACME challenges on the client side.
 
 ## Environment Variables
 
@@ -50,7 +50,7 @@ This starts frps with HTTPS vhost on port 443 and frpc control on port 7000. Tra
 | `PGID` | No | `1000` | GID for the frps process |
 | `BIND_PORT` | No | `7000` | Port frpc clients connect to |
 | `VHOST_HTTPS_PORT` | No | `443` | HTTPS vhost port (SNI-based domain routing) |
-| `VHOST_HTTP_PORT` | No | *(unset)* | HTTP vhost port (e.g. `80` for ACME HTTP-01 challenges) |
+| `VHOST_HTTP_PORT` | No | `80` | HTTP vhost port (for redirects and ACME challenges) |
 | `MAX_PORTS_PER_CLIENT` | No | `0` | Max TCP ports a client can bind (`0` = disabled) |
 | `MAX_POOL_COUNT` | No | `5` | Max connection pool size per proxy |
 | `ALLOW_PORTS` | No | *(empty)* | TCP port ranges clients may bind (e.g. `20000-30000`) |
@@ -85,7 +85,7 @@ transport.tls.keyFile = "/path/to/client.key"
 transport.tls.trustedCaFile = "/path/to/ca.crt"
 loginFailExit = false
 
-# Each domain gets its own proxy — frps routes by SNI
+# Each domain needs both HTTPS (traffic) and HTTP (redirects + ACME)
 [[proxies]]
 name = "site1-https"
 type = "https"
@@ -94,19 +94,18 @@ localPort = 443
 customDomains = ["site1.app.nl"]
 
 [[proxies]]
-name = "site2-https"
-type = "https"
-localIP = "127.0.0.1"
-localPort = 443
-customDomains = ["site2.app.nl"]
-
-# Optional: proxy HTTP for ACME challenges (requires VHOST_HTTP_PORT=80 on server)
-[[proxies]]
 name = "site1-http"
 type = "http"
 localIP = "127.0.0.1"
 localPort = 80
 customDomains = ["site1.app.nl"]
+
+[[proxies]]
+name = "site2-https"
+type = "https"
+localIP = "127.0.0.1"
+localPort = 443
+customDomains = ["site2.app.nl"]
 
 [[proxies]]
 name = "site2-http"

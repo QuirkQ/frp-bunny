@@ -42,6 +42,19 @@ docker run -d \
 | `TLS_CERT_B64` | No | *(unset)* | Base64-encoded server certificate (alternative to mounting files) |
 | `TLS_KEY_B64` | No | *(unset)* | Base64-encoded server private key |
 | `TLS_CA_B64` | No | *(unset)* | Base64-encoded CA certificate |
+| `HEALTH_PORT` | No | `8080` | HTTP health check port (`0` to disable) |
+
+## Health Check
+
+An HTTP health endpoint runs on port `8080` (configurable via `HEALTH_PORT`). Use it for platform health probes:
+
+- **URL:** `http://<container>:8080/cgi-bin/health`
+- Returns `200 OK` when frps is running, `503` otherwise
+- Works with mTLS since it's a separate plain HTTP server, not the frp control port
+
+For Bunny Magic Containers, set all three probes (Startup, Readiness, Liveness) to **HTTP GET** on port **8080** path `/cgi-bin/health`.
+
+Set `HEALTH_PORT=0` to disable the health server entirely.
 
 ## TLS and mTLS
 

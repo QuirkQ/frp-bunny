@@ -77,7 +77,9 @@ MAX_PORTS_PER_CLIENT="${MAX_PORTS_PER_CLIENT:-5}"
 MAX_POOL_COUNT="${MAX_POOL_COUNT:-5}"
 ALLOW_PORTS="${ALLOW_PORTS:-10000-50000}"
 
-PORT_VARS="BIND_PORT DASHBOARD_PORT"
+HEALTH_PORT="${HEALTH_PORT:-8080}"
+
+PORT_VARS="BIND_PORT DASHBOARD_PORT HEALTH_PORT"
 
 # Vhost ports are optional — only validated/enabled if explicitly set
 if [ -n "${VHOST_HTTP_PORT:-}" ]; then
@@ -196,6 +198,29 @@ fi
 
 chmod 400 /etc/frp/frps.toml
 chown frps:frps /etc/frp/frps.toml 2>/dev/null || true
+
+# --- Health endpoint ---
+
+start_health_server() {
+  HEALTH_DIR="/tmp/health"
+  mkdir -p "$HEALTH_DIR/cgi-bin"
+
+  cat > "$HEALTH_DIR/cgi-bin/health" <<'HEALTHEOF'
+#!/bin/sh
+if pgrep frps > /dev/null 2>&1; then
+  printf 'Content-Type: text/plain\r\n\r\nok\n'
+else
+  printf 'Status: 503\r\nContent-Type: text/plain\r\n\r\nfrps not running\n'
+fi
+HEALTHEOF
+  chmod +x "$HEALTH_DIR/cgi-bin/health"
+
+  httpd -p "$HEALTH_PORT" -h "$HEALTH_DIR"
+}
+
+if [ -n "$HEALTH_PORT" ] && [ "$HEALTH_PORT" != "0" ]; then
+  start_health_server
+fi
 
 # Drop to frps user if running as root, otherwise exec directly
 if [ "$(id -u)" = "0" ]; then

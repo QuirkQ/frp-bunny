@@ -15,6 +15,10 @@ WORKDIR /src
 RUN mkdir -p web/frps/dist && echo '' > web/frps/dist/index.html \
     && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /usr/bin/frps ./cmd/frps
 
+FROM alpine:${ALPINE_VERSION} AS extras
+
+RUN apk add --no-cache busybox-extras
+
 FROM alpine:${ALPINE_VERSION}
 
 RUN apk upgrade --no-cache \
@@ -24,13 +28,16 @@ RUN apk upgrade --no-cache \
     && mkdir -p /etc/frp \
     && chmod 777 /etc/frp
 
+COPY --from=extras /bin/busybox-extras /bin/busybox-extras
+RUN ln -s /bin/busybox-extras /usr/sbin/httpd
+
 COPY --from=builder /usr/bin/frps /usr/bin/frps
 COPY --chmod=555 entrypoint.sh /entrypoint.sh
 
-EXPOSE 7000
+EXPOSE 7000 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD pgrep frps > /dev/null || exit 1
+    CMD wget -qO- http://127.0.0.1:8080/cgi-bin/health || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
 

@@ -27,7 +27,7 @@ RUN apk upgrade --no-cache \
 COPY --from=builder /usr/bin/frps /usr/bin/frps
 COPY --chmod=555 entrypoint.sh /entrypoint.sh
 
-EXPOSE 7000 8080
+EXPOSE 443 7000 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -qO- http://127.0.0.1:8080/cgi-bin/health || exit 1

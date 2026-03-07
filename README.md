@@ -1,11 +1,11 @@
 # frp-bunny
 
-Hardened [frp](https://github.com/fatedier/frp) server (`frps`) Docker image designed for [Bunny Magic Containers](https://bunny.net/magic-containers/). Secrets are passed via environment variables at runtime — nothing is baked into the image.
+Hardened [frp](https://github.com/fatedier/frp) server (`frps`) Docker image designed for [Bunny Magic Containers](https://bunny.net/magic-containers/). Routes HTTPS traffic via SNI to frpc clients running alongside Caddy (or any reverse proxy). Secrets are passed via environment variables at runtime — nothing is baked into the image.
 
 ## Architecture
 
 ```
-[Your service] → frpc (client, TLS) → frps on Magic Containers → Public internet
+Browser (HTTPS) → frps (SNI routing, port 443) → frpc (client, mTLS) → Caddy → your app
 ```
 
 ## Quick Start
@@ -13,9 +13,11 @@ Hardened [frp](https://github.com/fatedier/frp) server (`frps`) Docker image des
 ```bash
 docker run -d \
   -e FRP_TOKEN=your-secret-token \
-  -p 7000:7000 \
+  -p 443:443 -p 7000:7000 \
   ghcr.io/quirkq/frp-bunny:latest
 ```
+
+This starts frps with HTTPS vhost on port 443 and frpc control on port 7000. Traffic is routed by domain (SNI) — multiple sites share port 443.
 
 ## Environment Variables
 
@@ -25,17 +27,17 @@ docker run -d \
 | `PUID` | No | `1000` | UID for the frps process |
 | `PGID` | No | `1000` | GID for the frps process |
 | `BIND_PORT` | No | `7000` | Port frpc clients connect to |
-| `MAX_PORTS_PER_CLIENT` | No | `5` | Max remote ports a single client can claim |
+| `VHOST_HTTPS_PORT` | No | `443` | HTTPS vhost port (SNI-based domain routing) |
+| `VHOST_HTTP_PORT` | No | *(unset)* | HTTP vhost port (e.g. `80` for ACME HTTP-01 challenges) |
+| `MAX_PORTS_PER_CLIENT` | No | `0` | Max TCP ports a client can bind (`0` = disabled) |
 | `MAX_POOL_COUNT` | No | `5` | Max connection pool size per proxy |
-| `ALLOW_PORTS` | No | `10000-50000` | Port ranges clients may bind (comma-separated, e.g. `20000-30000,40000-40100`) |
+| `ALLOW_PORTS` | No | *(empty)* | TCP port ranges clients may bind (e.g. `20000-30000`) |
+| `SUBDOMAIN_HOST` | No | *(unset)* | Base domain for subdomain routing (e.g. `app.nl`) |
 | `DASHBOARD_PASSWORD` | No | *(unset)* | Enables the dashboard when set |
 | `DASHBOARD_USER` | No | `admin` | Dashboard login username |
 | `DASHBOARD_PORT` | No | `7500` | Dashboard port |
 | `DASHBOARD_ADDR` | No | `127.0.0.1` | Dashboard bind address |
 | `ENABLE_PROMETHEUS` | No | `false` | Expose Prometheus metrics at `/metrics` (requires dashboard) |
-| `VHOST_HTTP_PORT` | No | *(unset)* | Enables HTTP vhost proxying when set |
-| `VHOST_HTTPS_PORT` | No | *(unset)* | Enables HTTPS vhost proxying when set |
-| `SUBDOMAIN_HOST` | No | *(unset)* | Restrict vhost subdomain claims to this base domain |
 | `TLS_CERT_FILE` | No | `/etc/frp/tls/server.crt` | Server TLS certificate path |
 | `TLS_KEY_FILE` | No | `/etc/frp/tls/server.key` | Server TLS private key path |
 | `TLS_CA_FILE` | No | `/etc/frp/tls/ca.crt` | CA certificate for mTLS client verification |
@@ -43,6 +45,88 @@ docker run -d \
 | `TLS_KEY_B64` | No | *(unset)* | Base64-encoded server private key |
 | `TLS_CA_B64` | No | *(unset)* | Base64-encoded CA certificate |
 | `HEALTH_PORT` | No | `8080` | HTTP health check port (`0` to disable) |
+
+## Client Setup with Caddy
+
+The recommended setup uses frpc alongside Caddy on your server. frps passes HTTPS traffic through transparently (SNI routing) — Caddy handles TLS termination and gets its own Let's Encrypt certificates.
+
+### frpc.toml
+
+```toml
+serverAddr = "109.224.229.229"
+serverPort = 7000
+
+auth.token = "your-secret-token"
+transport.tls.enable = true
+transport.tls.certFile = "/path/to/client.crt"
+transport.tls.keyFile = "/path/to/client.key"
+transport.tls.trustedCaFile = "/path/to/ca.crt"
+loginFailExit = false
+
+# Each domain gets its own proxy — frps routes by SNI
+[[proxies]]
+name = "site1-https"
+type = "https"
+localIP = "127.0.0.1"
+localPort = 443
+customDomains = ["site1.app.nl"]
+
+[[proxies]]
+name = "site2-https"
+type = "https"
+localIP = "127.0.0.1"
+localPort = 443
+customDomains = ["site2.app.nl"]
+
+# Optional: proxy HTTP for ACME challenges (requires VHOST_HTTP_PORT=80 on server)
+[[proxies]]
+name = "site1-http"
+type = "http"
+localIP = "127.0.0.1"
+localPort = 80
+customDomains = ["site1.app.nl"]
+
+[[proxies]]
+name = "site2-http"
+type = "http"
+localIP = "127.0.0.1"
+localPort = 80
+customDomains = ["site2.app.nl"]
+```
+
+### Caddyfile
+
+```caddyfile
+site1.app.nl {
+    reverse_proxy localhost:3000
+}
+
+site2.app.nl {
+    reverse_proxy localhost:4000
+}
+```
+
+Caddy automatically obtains and renews Let's Encrypt certificates for each domain.
+
+### DNS
+
+Point each domain to the frps server:
+
+```
+site1.app.nl  A  109.224.229.229
+site2.app.nl  A  109.224.229.229
+```
+
+### Flow
+
+```
+1. Browser → HTTPS → 109.224.229.229:443
+2. frps reads SNI header (site1.app.nl), routes to the frpc that registered that domain
+3. frpc forwards to Caddy on localhost:443
+4. Caddy terminates TLS, proxies to your app on localhost:3000
+```
+
+frps never sees the decrypted traffic — it only reads the SNI hostname from the TLS ClientHello.
 
 ## Health Check
 
@@ -101,7 +185,7 @@ docker run -d \
   -v ./certs/ca.crt:/etc/frp/tls/ca.crt:ro \
   -v ./certs/server.crt:/etc/frp/tls/server.crt:ro \
   -v ./certs/server.key:/etc/frp/tls/server.key:ro \
-  -p 7000:7000 \
+  -p 443:443 -p 7000:7000 \
   ghcr.io/quirkq/frp-bunny:latest
 ```
 
@@ -117,34 +201,11 @@ docker run -d \
   -e TLS_CERT_B64=$(base64 < certs/server.crt) \
   -e TLS_KEY_B64=$(base64 < certs/server.key) \
   -e TLS_CA_B64=$(base64 < certs/ca.crt) \
-  -p 7000:7000 \
+  -p 443:443 -p 7000:7000 \
   ghcr.io/quirkq/frp-bunny:latest
 ```
 
 The `_B64` env vars are decoded to files at startup. If both a mounted file and a `_B64` var exist, the decoded env var takes precedence.
-
-### Client setup (frpc)
-
-Update your `frpc.toml` to use the client certificate and verify the server:
-
-```toml
-serverAddr = "your-magic-endpoint.b-cdn.net"
-serverPort = 7000
-
-auth.token = "your-secret-token"
-
-transport.tls.enable = true
-transport.tls.certFile = "/path/to/client.crt"
-transport.tls.keyFile = "/path/to/client.key"
-transport.tls.trustedCaFile = "/path/to/ca.crt"
-
-[[proxies]]
-name = "my-service"
-type = "tcp"
-localIP = "127.0.0.1"
-localPort = 3000
-remotePort = 20000
-```
 
 With mTLS enabled, even if an attacker obtains the token, they cannot connect without a valid client certificate signed by your CA.
 
@@ -153,37 +214,15 @@ With mTLS enabled, even if an attacker obtains the token, they cannot connect wi
 1. Push the image to GHCR (the GitHub Actions workflow does this automatically on every push to `main`).
 2. In the [bunny.net dashboard](https://dash.bunny.net), go to **Magic Containers** and create a new app.
 3. Set the container image to `ghcr.io/quirkq/frp-bunny:latest`.
-4. Add `FRP_TOKEN` as an environment variable in the container config.
-5. Add an endpoint for port **7000** (Anycast) — this is the frpc connection port.
-6. Use **Single Region** deployment — multiple frps instances can't share the same ports, and anycast routing would scatter frpc connections.
+4. Add environment variables: `FRP_TOKEN`, and optionally `TLS_CERT_B64`, `TLS_KEY_B64`, `TLS_CA_B64` for mTLS.
+5. Add endpoints:
+   - Port **443** — HTTPS vhost traffic (public)
+   - Port **7000** — frpc control connection (public)
+   - Port **8080** — health checks (internal)
+6. Set health probes to **HTTP GET** on port **8080** path `/cgi-bin/health`.
+7. Use **Single Region** deployment — multiple frps instances can't share the same ports.
 
-Note the public hostname assigned to your endpoint — this is your `serverAddr` for frpc.
-
-## Client Config (frpc)
-
-The frpc client must also enable TLS to match the server. Minimal `frpc.toml`:
-
-```toml
-serverAddr = "your-magic-endpoint.b-cdn.net"
-serverPort = 7000
-
-auth.token = "your-secret-token"
-transport.tls.enable = true
-loginFailExit = false
-
-[[proxies]]
-name = "my-service"
-type = "tcp"
-localIP = "127.0.0.1"
-localPort = 3000
-remotePort = 20000
-```
-
-> `loginFailExit = false` keeps frpc retrying on connection failure instead of exiting.
->
-> `remotePort` must fall within the server's allowed range (default `10000-50000`).
-
-See the [mTLS section](#client-setup-frpc) for adding client certificate authentication.
+Note the public IP assigned to your endpoint — this is your `serverAddr` for frpc and where you point DNS.
 
 ## Image Tags
 
@@ -196,22 +235,20 @@ See the [mTLS section](#client-setup-frpc) for adding client certificate authent
 
 ## Hardening
 
-- TLS enforced on the frpc-frps connection
+- HTTPS vhost routing by default — no arbitrary TCP port binding
+- TLS enforced on the frpc-frps control connection
 - mTLS support — auto-enabled when certs are mounted
 - Token re-validated on every heartbeat and new connection (`auth.additionalScopes`)
-- Allowed port ranges restricted (`allowPorts`, default `10000-50000`)
-- Port claims capped per client (`maxPortsPerClient`)
 - Connection pool capped per proxy (`transport.maxPoolCount`)
 - Runs as non-root user (`frps`) with configurable UID/GID via `PUID`/`PGID`
 - Compatible with `--user` / Kubernetes `securityContext` for rootless operation
 - Dashboard disabled by default, bound to `127.0.0.1` when enabled
 - Dashboard TLS auto-enabled when server certs are mounted
-- Vhost ports disabled by default (opt-in via env vars)
 - `detailedErrorsToClient = false` prevents info leakage
 - Config file generated at startup with `400` permissions
 - Port and env var inputs validated; strings escaped for TOML injection prevention
 - Trivy vulnerability scan on every build
-- Go version auto-detected at build time for latest security patches
+- Go and Alpine versions auto-detected at build time for latest security patches
 - Scheduled builds pick up new upstream frp releases automatically
 
 ## License

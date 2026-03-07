@@ -71,22 +71,20 @@ is_uint() {
 }
 
 BIND_PORT="${BIND_PORT:-7000}"
+VHOST_HTTPS_PORT="${VHOST_HTTPS_PORT:-443}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-7500}"
 DASHBOARD_ADDR="${DASHBOARD_ADDR:-127.0.0.1}"
-MAX_PORTS_PER_CLIENT="${MAX_PORTS_PER_CLIENT:-5}"
+MAX_PORTS_PER_CLIENT="${MAX_PORTS_PER_CLIENT:-0}"
 MAX_POOL_COUNT="${MAX_POOL_COUNT:-5}"
-ALLOW_PORTS="${ALLOW_PORTS:-10000-50000}"
+ALLOW_PORTS="${ALLOW_PORTS:-}"
 
 HEALTH_PORT="${HEALTH_PORT:-8080}"
 
-PORT_VARS="BIND_PORT DASHBOARD_PORT HEALTH_PORT"
+PORT_VARS="BIND_PORT VHOST_HTTPS_PORT DASHBOARD_PORT HEALTH_PORT"
 
-# Vhost ports are optional — only validated/enabled if explicitly set
+# HTTP vhost is optional — only validated/enabled if explicitly set
 if [ -n "${VHOST_HTTP_PORT:-}" ]; then
   PORT_VARS="$PORT_VARS VHOST_HTTP_PORT"
-fi
-if [ -n "${VHOST_HTTPS_PORT:-}" ]; then
-  PORT_VARS="$PORT_VARS VHOST_HTTPS_PORT"
 fi
 
 for var in $PORT_VARS; do
@@ -137,8 +135,10 @@ maxPortsPerClient = ${MAX_PORTS_PER_CLIENT}
 detailedErrorsToClient = false
 EOF
 
-# Restrict which ports clients may bind
-build_allow_ports "$ALLOW_PORTS" >> /etc/frp/frps.toml
+# Restrict which ports clients may bind (empty = no TCP port binding allowed)
+if [ -n "$ALLOW_PORTS" ]; then
+  build_allow_ports "$ALLOW_PORTS" >> /etc/frp/frps.toml
+fi
 
 # TLS certificates: use if mounted (enables server identity verification by frpc)
 if [ -f "${TLS_CERT_FILE:-/etc/frp/tls/server.crt}" ] && [ -f "${TLS_KEY_FILE:-/etc/frp/tls/server.key}" ]; then
@@ -183,12 +183,12 @@ EOF
   fi
 fi
 
-# Vhost ports: only enabled when explicitly set
+# HTTPS vhost: always enabled (SNI-based routing)
+echo "vhostHTTPSPort = ${VHOST_HTTPS_PORT}" >> /etc/frp/frps.toml
+
+# HTTP vhost: optional (e.g. for ACME HTTP-01 challenges)
 if [ -n "${VHOST_HTTP_PORT:-}" ]; then
   echo "vhostHTTPPort = ${VHOST_HTTP_PORT}" >> /etc/frp/frps.toml
-fi
-if [ -n "${VHOST_HTTPS_PORT:-}" ]; then
-  echo "vhostHTTPSPort = ${VHOST_HTTPS_PORT}" >> /etc/frp/frps.toml
 fi
 
 # Subdomain restriction: only when explicitly set

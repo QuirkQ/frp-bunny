@@ -75,7 +75,7 @@ The recommended setup uses frpc alongside Caddy on your server. frps passes HTTP
 ### frpc.toml
 
 ```toml
-serverAddr = "109.224.229.229"
+serverAddr = "your-server-ip"
 serverPort = 7000
 
 auth.token = "your-secret-token"
@@ -135,14 +135,14 @@ Caddy automatically obtains and renews Let's Encrypt certificates for each domai
 Point each domain to the frps server:
 
 ```
-site1.app.nl  A  109.224.229.229
-site2.app.nl  A  109.224.229.229
+site1.app.nl  A  your-server-ip
+site2.app.nl  A  your-server-ip
 ```
 
 ### Flow
 
 ```
-1. Browser → HTTPS → 109.224.229.229:443
+1. Browser → HTTPS → your-server-ip:443
 2. frps reads SNI header (site1.app.nl), routes to the frpc that registered that domain
 3. frpc forwards to Caddy on localhost:443
 4. Caddy terminates TLS, proxies to your app on localhost:3000

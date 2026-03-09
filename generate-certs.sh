@@ -99,11 +99,16 @@ generate_cert() {
   openssl genrsa -out "$OUT_DIR/${name}.key" "$BITS" 2>/dev/null
   openssl req -new -key "$OUT_DIR/${name}.key" -out "$OUT_DIR/${name}.csr" \
     -subj "/CN=${cn}" 2>/dev/null
+
+  # Modern Go requires SANs (CN-only certs are rejected since Go 1.15)
+  SAN_FILE=$(mktemp)
+  printf "subjectAltName=DNS:%s\n" "$cn" > "$SAN_FILE"
   openssl x509 -req -days "$DAYS" \
     -in "$OUT_DIR/${name}.csr" \
     -CA "$OUT_DIR/ca.crt" -CAkey "$OUT_DIR/ca.key" -CAcreateserial \
+    -extfile "$SAN_FILE" \
     -out "$OUT_DIR/${name}.crt" 2>/dev/null
-  rm -f "$OUT_DIR/${name}.csr"
+  rm -f "$OUT_DIR/${name}.csr" "$SAN_FILE"
 
   chmod 600 "$OUT_DIR/${name}.key"
   chmod 644 "$OUT_DIR/${name}.crt"

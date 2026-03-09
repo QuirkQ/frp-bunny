@@ -12,7 +12,8 @@ RUN git clone --depth 1 --branch v${FRP_VERSION} https://github.com/fatedier/frp
 
 WORKDIR /src
 
-RUN mkdir -p web/frps/dist && echo '' > web/frps/dist/index.html \
+RUN mkdir -p web/frps/dist web/frpc/dist \
+    && echo '' > web/frps/dist/index.html && echo '' > web/frpc/dist/index.html \
     && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /usr/bin/frps ./cmd/frps \
     && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /usr/bin/frpc ./cmd/frpc
 

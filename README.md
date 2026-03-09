@@ -102,6 +102,7 @@ Set `FRP_MODE=client` to run as frpc. Proxy definitions are loaded from `/etc/fr
 | `HEARTBEAT_INTERVAL` | No | `3` | Heartbeat / keepalive probe interval in seconds |
 | `HEARTBEAT_TIMEOUT` | No | `9` | Heartbeat timeout in seconds |
 | `TLS_SERVER_NAME` | No | *(unset)* | Expected server cert CN/SAN (for TLS hostname verification) |
+| `PROXY_PROTOCOL_VERSION` | No | *(unset)* | Prepend PROXY protocol header to HTTPS backend connections (`v1` or `v2`) — enables real client IP forwarding |
 | `FRP_PROXIES_B64` | No | *(unset)* | Base64-encoded proxy definitions (decoded to `/etc/frp/conf.d/proxies.toml`) |
 
 By default the client probes the server every 3 seconds (via both TCP mux keepalive and application heartbeats) and declares the connection dead after 9 seconds. The hardcoded reconnect logic retries at 200ms for the first 3 attempts, then backs off exponentially up to 20 seconds. Combined with 5 pre-established pool connections, this minimizes downtime on server restarts or network blips.
@@ -221,6 +222,60 @@ site2.app.nl {
 ```
 
 Caddy automatically obtains and renews Let's Encrypt certificates for each domain.
+
+### Real Client IP (PROXY Protocol)
+
+Since frps uses SNI passthrough (never decrypts traffic), it can't inject HTTP headers like `X-Forwarded-For`. Instead, frpc can prepend a [PROXY protocol](https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt) header to each connection, which carries the original client IP as seen by frps.
+
+Set `PROXY_PROTOCOL_VERSION=v2` on the frpc container — the entrypoint automatically injects `transport.proxyProtocolVersion` into HTTPS proxy definitions (HTTP proxies are skipped since they only handle redirects and ACME challenges):
+
+```bash
+docker run -d --network host \
+  -e FRP_MODE=client \
+  -e FRP_TOKEN=your-secret-token \
+  -e SERVER_ADDR=your-server-ip \
+  -e PROXY_PROTOCOL_VERSION=v2 \
+  -v ./proxies.toml:/etc/frp/conf.d/proxies.toml:ro \
+  ghcr.io/quirkq/frp-bunny:latest
+```
+
+Then configure Caddy to read the PROXY protocol header before TLS:
+
+```caddyfile
+{
+    servers {
+        listener_wrappers {
+            proxy_protocol {
+                allow 127.0.0.1/32
+            }
+            tls
+        }
+    }
+}
+
+site1.app.nl {
+    reverse_proxy localhost:3000 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+    }
+}
+```
+
+The `proxy_protocol` wrapper must come **before** `tls` in the chain. The `allow` directive specifies which source IPs are trusted to send PROXY protocol headers — use `127.0.0.1/32` when frpc runs on the same host as Caddy. Once enabled, `{remote_host}` in Caddy reflects the real client IP instead of the frpc loopback address.
+
+> **Important:** When PROXY protocol is enabled, connections from allowed sources must include the header. Use `v2` (binary, more efficient) unless your backend specifically requires `v1` (human-readable).
+
+Alternatively, you can set `transport.proxyProtocolVersion` directly in your `proxies.toml` per-proxy instead of using the env var:
+
+```toml
+[[proxies]]
+name = "site1-https"
+type = "https"
+localIP = "127.0.0.1"
+localPort = 443
+customDomains = ["site1.app.nl"]
+transport.proxyProtocolVersion = "v2"
+```
 
 ### DNS
 
@@ -367,13 +422,14 @@ cd example
 ./run.sh --no-build # skip image build (use existing frp-bunny:test)
 ```
 
-The script generates mTLS certificates using `generate-certs.sh`, starts all services, and runs 5 integration tests:
+The script generates mTLS certificates using `generate-certs.sh`, starts all services, and runs 6 integration tests:
 
 1. **DNS resolution** — CoreDNS resolves `app.test.internal` to frps
 2. **HTTPS vhost (SNI passthrough)** — full chain from test client through frps → frpc → Caddy → nginx
 3. **HTTP vhost (redirect)** — Caddy returns 308 redirect to HTTPS
 4. **Server health endpoint** — HTTP health check on port 8080
-5. **Unknown domain rejected** — requests for unregistered domains are refused
+5. **PROXY protocol (real client IP)** — verifies Caddy sees the test client's IP, not the frpc IP
+6. **Unknown domain rejected** — requests for unregistered domains are refused
 
 These same tests run in CI on every push — the image is only published if all tests pass.
 

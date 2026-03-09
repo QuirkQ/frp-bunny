@@ -1,0 +1,16 @@
+# Proxy definitions for the frpc client
+# Each domain needs HTTPS (SNI passthrough) and HTTP (redirects + ACME)
+
+[[proxies]]
+name = "app-https"
+type = "https"
+localIP = "172.20.2.30"
+localPort = 443
+customDomains = ["app.test.internal"]
+
+[[proxies]]
+name = "app-http"
+type = "http"
+localIP = "172.20.2.30"
+localPort = 80
+customDomains = ["app.test.internal"]

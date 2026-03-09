@@ -1,0 +1,7 @@
+# Caddy handles TLS termination with an internal CA (self-signed for testing)
+# In production, remove "tls internal" and Caddy will use Let's Encrypt automatically
+
+app.test.internal {
+	tls internal
+	reverse_proxy app:80
+}

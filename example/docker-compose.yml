@@ -57,6 +57,7 @@ services:
       FRP_MODE: client
       FRP_TOKEN: test-token-do-not-use-in-production
       SERVER_ADDR: 172.20.1.10
+      PROXY_PROTOCOL_VERSION: v2
       TLS_CERT_FILE: /certs/client.crt
       TLS_KEY_FILE: /certs/client.key
       TLS_CA_FILE: /certs/ca.crt

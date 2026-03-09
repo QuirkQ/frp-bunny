@@ -302,6 +302,27 @@ transport.tls.serverName = "$(esc "$TLS_SERVER_NAME")"
 EOF
   fi
 
+  # Inject PROXY protocol version into HTTPS proxy definitions (works with read-only mounts)
+  # Only HTTPS proxies get PROXY protocol — HTTP proxies handle redirects and ACME challenges
+  # where Caddy's auto-redirect server does not support the PROXY protocol listener wrapper.
+  PROXY_PROTOCOL_VERSION="${PROXY_PROTOCOL_VERSION:-}"
+  if [ -n "$PROXY_PROTOCOL_VERSION" ]; then
+    case "$PROXY_PROTOCOL_VERSION" in
+      v1|v2) ;;
+      *) echo "ERROR: PROXY_PROTOCOL_VERSION must be 'v1' or 'v2', got: $PROXY_PROTOCOL_VERSION" >&2; exit 1 ;;
+    esac
+    PROCESSED_DIR="/etc/frp/conf.d.processed"
+    mkdir -p "$PROCESSED_DIR"
+    chown frp:frp "$PROCESSED_DIR" 2>/dev/null || true
+    for f in "$CONF_DIR"/*.toml; do
+      [ -f "$f" ] || continue
+      sed "/^type = \"https\"/a transport.proxyProtocolVersion = \"${PROXY_PROTOCOL_VERSION}\"" "$f" > "$PROCESSED_DIR/$(basename "$f")"
+      chmod 400 "$PROCESSED_DIR/$(basename "$f")"
+      chown frp:frp "$PROCESSED_DIR/$(basename "$f")" 2>/dev/null || true
+    done
+    CONF_DIR="$PROCESSED_DIR"
+  fi
+
   # Include proxy definitions from conf.d
   cat >> /etc/frp/frpc.toml <<EOF
 

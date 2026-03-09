@@ -1,7 +1,22 @@
 # Caddy handles TLS termination with an internal CA (self-signed for testing)
 # In production, remove "tls internal" and Caddy will use Let's Encrypt automatically
 
+# Enable PROXY protocol so Caddy sees the real client IP instead of the frpc IP.
+# The "proxy_protocol" wrapper must come before "tls" in the chain.
+# "allow" specifies which source IPs are trusted to send PROXY protocol headers.
+{
+	servers {
+		listener_wrappers {
+			proxy_protocol {
+				allow 172.20.2.0/24
+			}
+			tls
+		}
+	}
+}
+
 app.test.internal {
 	tls internal
+	header X-Real-IP {remote_host}
 	reverse_proxy app:80
 }

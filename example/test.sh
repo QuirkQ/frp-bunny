@@ -62,6 +62,10 @@ run_test "HTTP vhost (redirect)" \
 run_test "Server health endpoint" \
   sh -c 'curl -sf http://172.20.0.10:8080/cgi-bin/health | grep -q "ok"'
 
+# PROXY protocol: Caddy should see the real client IP (this test runner), not the frpc IP
+run_test "PROXY protocol (real client IP)" \
+  sh -c 'curl -ski https://app.test.internal | grep -qi "x-real-ip: 172.20.0.100"'
+
 # Wrong domain should not route (frps has no proxy for it)
 run_test "Unknown domain rejected" \
   sh -c '

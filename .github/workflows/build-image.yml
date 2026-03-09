@@ -23,7 +23,7 @@ env:
 
 jobs:
   build:
-    name: Build and push
+    name: Build, test, and push
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -55,12 +55,30 @@ jobs:
           echo "alpine=$ALPINE_VERSION" >> "$GITHUB_OUTPUT"
           echo "Using Go $GO_VERSION, Alpine $ALPINE_VERSION"
 
-      - name: Build and push
+      - name: Build test image (amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: frp-bunny:test
+          build-args: |
+            FRP_VERSION=${{ inputs.frp_version }}
+            GO_VERSION=${{ steps.versions.outputs.go }}
+            ALPINE_VERSION=${{ steps.versions.outputs.alpine }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run integration tests
+        working-directory: example
+        run: ./run.sh --no-build
+
+      - name: Build and push (multi-platform)
+        if: inputs.push
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ inputs.push }}
+          push: true
           tags: ${{ inputs.tags }}
           build-args: |
             FRP_VERSION=${{ inputs.frp_version }}
@@ -73,6 +91,7 @@ jobs:
 
       - name: Lowercase image name
         id: image
+        if: inputs.push
         run: echo "name=${IMAGE_NAME,,}" >> "$GITHUB_OUTPUT"
 
       - name: Run Trivy vulnerability scanner

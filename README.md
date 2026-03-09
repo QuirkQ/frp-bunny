@@ -276,7 +276,12 @@ A helper script is included to generate all certificates at once:
 
 # Custom output dir, key size, and validity
 ./generate-certs.sh -d ./my-certs -b 2048 -y 5
+
+# Add extra SANs (DNS names and IPs auto-detected)
+./generate-certs.sh --san frps.example.com --san 203.0.113.10
 ```
+
+Each certificate always includes a DNS SAN matching its CN (e.g. `DNS:frps` for server certs). The `--san` flag adds extra SANs to **all** generated certificates — useful when clients connect by IP or a different hostname. IPs are auto-detected and added as `IP:` SANs, everything else as `DNS:` SANs.
 
 Run `./generate-certs.sh --help` for all options. The script automatically sets restrictive file permissions (`700` on the directory, `600` on private keys).
 

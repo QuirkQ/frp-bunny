@@ -15,6 +15,9 @@ Options:
   -k, --ca-key FILE   Path to existing CA private key
   -b, --bits N        RSA key size in bits (default: 4096)
   -y, --years N       Certificate validity in years (default: 10)
+  --san SAN           Extra SAN to add to all certs (repeatable)
+                      Accepts DNS names and IPs (auto-detected)
+                      Example: --san frps.example.com --san 203.0.113.10
   -h, --help          Show this help message
 EOF
   exit 0
@@ -27,6 +30,7 @@ CA_CERT=""
 CA_KEY=""
 BITS=4096
 YEARS=10
+EXTRA_SANS=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -37,6 +41,7 @@ while [ $# -gt 0 ]; do
     -k|--ca-key)  CA_KEY="$2"; shift 2 ;;
     -b|--bits)    BITS="$2"; shift 2 ;;
     -y|--years)   YEARS="$2"; shift 2 ;;
+    --san)        EXTRA_SANS="${EXTRA_SANS:+${EXTRA_SANS},}$2"; shift 2 ;;
     -h|--help)    usage ;;
     *) echo "Unknown option: $1" >&2; usage ;;
   esac
@@ -102,7 +107,17 @@ generate_cert() {
 
   # Modern Go requires SANs (CN-only certs are rejected since Go 1.15)
   SAN_FILE=$(mktemp)
-  printf "subjectAltName=DNS:%s\n" "$cn" > "$SAN_FILE"
+  SAN_VALUE="DNS:${cn}"
+  # Append extra SANs (auto-detect IP vs DNS)
+  OLD_IFS="$IFS"; IFS=","
+  for san in $EXTRA_SANS; do
+    case "$san" in
+      *[!0-9.]*) SAN_VALUE="${SAN_VALUE},DNS:${san}" ;;  # contains non-IP chars → DNS
+      *)         SAN_VALUE="${SAN_VALUE},IP:${san}" ;;    # pure digits and dots → IP
+    esac
+  done
+  IFS="$OLD_IFS"
+  printf "subjectAltName=%s\n" "$SAN_VALUE" > "$SAN_FILE"
   openssl x509 -req -days "$DAYS" \
     -in "$OUT_DIR/${name}.csr" \
     -CA "$OUT_DIR/ca.crt" -CAkey "$OUT_DIR/ca.key" -CAcreateserial \

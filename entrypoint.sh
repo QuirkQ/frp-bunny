@@ -83,9 +83,41 @@ is_uint() {
 }
 
 HEALTH_PORT="${HEALTH_PORT:-8080}"
+FRP_RESTART_DELAY_INITIAL="${FRP_RESTART_DELAY_INITIAL:-1}"
+FRP_RESTART_DELAY_MAX="${FRP_RESTART_DELAY_MAX:-30}"
+FRPC_HEALTH_INTERVAL="${FRPC_HEALTH_INTERVAL:-10}"
+FRPC_HEALTH_START_PERIOD="${FRPC_HEALTH_START_PERIOD:-20}"
+FRPC_HEALTH_MAX_FAILURES="${FRPC_HEALTH_MAX_FAILURES:-3}"
+FRPC_HEALTH_STOP_GRACE="${FRPC_HEALTH_STOP_GRACE:-5}"
+FRPC_STATUS_TIMEOUT="${FRPC_STATUS_TIMEOUT:-5s}"
+
+validate_restart_settings() {
+  for var in FRP_RESTART_DELAY_INITIAL FRP_RESTART_DELAY_MAX FRPC_HEALTH_INTERVAL FRPC_HEALTH_START_PERIOD FRPC_HEALTH_MAX_FAILURES FRPC_HEALTH_STOP_GRACE; do
+    eval val=\$$var
+    if ! is_uint "$val"; then
+      echo "ERROR: $var must be a non-negative integer, got: $val" >&2
+      exit 1
+    fi
+  done
+
+  if [ "$FRPC_HEALTH_MAX_FAILURES" -lt 1 ]; then
+    echo "ERROR: FRPC_HEALTH_MAX_FAILURES must be at least 1, got: $FRPC_HEALTH_MAX_FAILURES" >&2
+    exit 1
+  fi
+
+  if [ "$FRP_RESTART_DELAY_INITIAL" -gt "$FRP_RESTART_DELAY_MAX" ]; then
+    echo "ERROR: FRP_RESTART_DELAY_INITIAL must be <= FRP_RESTART_DELAY_MAX" >&2
+    exit 1
+  fi
+}
+
+validate_restart_settings
 
 # Escape strings for safe TOML embedding (backslashes then double quotes)
 esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# Single-quote strings for safe shell embedding.
+shell_quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 
 # ============================
 # SERVER MODE
@@ -220,6 +252,10 @@ generate_client_config() {
   SERVER_ADDR="${SERVER_ADDR:-}"
   SERVER_PORT="${SERVER_PORT:-7000}"
   LOGIN_FAIL_EXIT="${LOGIN_FAIL_EXIT:-false}"
+  FRPC_WEB_ADDR="${FRPC_WEB_ADDR:-127.0.0.1}"
+  FRPC_WEB_PORT="${FRPC_WEB_PORT:-7400}"
+  FRPC_WEB_USER="${FRPC_WEB_USER:-}"
+  FRPC_WEB_PASSWORD="${FRPC_WEB_PASSWORD:-}"
 
   if [ -z "$SERVER_ADDR" ]; then
     echo "ERROR: SERVER_ADDR environment variable is required in client mode" >&2
@@ -228,6 +264,11 @@ generate_client_config() {
 
   if ! is_port "$SERVER_PORT"; then
     echo "ERROR: SERVER_PORT must be a valid port number (1-65535), got: $SERVER_PORT" >&2
+    exit 1
+  fi
+
+  if ! is_port "$FRPC_WEB_PORT"; then
+    echo "ERROR: FRPC_WEB_PORT must be a valid port number (1-65535), got: $FRPC_WEB_PORT" >&2
     exit 1
   fi
 
@@ -274,6 +315,11 @@ transport.heartbeatInterval = ${HEARTBEAT_INTERVAL}
 transport.heartbeatTimeout = ${HEARTBEAT_TIMEOUT}
 transport.dialServerTimeout = 5
 transport.dialServerKeepalive = 10
+
+webServer.addr = "$(esc "$FRPC_WEB_ADDR")"
+webServer.port = ${FRPC_WEB_PORT}
+webServer.user = "$(esc "$FRPC_WEB_USER")"
+webServer.password = "$(esc "$FRPC_WEB_PASSWORD")"
 EOF
 
   # TLS client certificate (for mTLS)
@@ -324,6 +370,15 @@ EOF
   fi
 
   # Include proxy definitions from conf.d
+  FRPC_EXPECT_PROXY_STATUS=false
+  for f in "$CONF_DIR"/*.toml; do
+    [ -f "$f" ] || continue
+    if grep -Eq '^[[:space:]]*\[\[(proxies|visitors)\]\]' "$f"; then
+      FRPC_EXPECT_PROXY_STATUS=true
+      break
+    fi
+  done
+
   cat >> /etc/frp/frpc.toml <<EOF
 
 includes = ["${CONF_DIR}/*.toml"]
@@ -345,7 +400,48 @@ else
   FRP_CONF="/etc/frp/frpc.toml"
 fi
 
-# --- Health endpoint ---
+# --- Health endpoint and supervisor ---
+
+create_healthcheck() {
+  FRPC_HEALTH_SERVER_ADDR="$(shell_quote "${SERVER_ADDR:-}")"
+  FRPC_HEALTH_SERVER_PORT="${SERVER_PORT:-}"
+
+  cat > /tmp/frp-healthcheck <<EOF
+#!/bin/sh
+set -eu
+
+if ! pgrep ${FRP_BIN} > /dev/null 2>&1; then
+  echo "${FRP_BIN} not running"
+  exit 1
+fi
+
+if [ "${FRP_MODE}" = "client" ]; then
+  if command -v nc > /dev/null 2>&1 && ! nc -z -w 2 ${FRPC_HEALTH_SERVER_ADDR} "${FRPC_HEALTH_SERVER_PORT}"; then
+    echo "frpc cannot reach ${SERVER_ADDR:-}:${SERVER_PORT:-}"
+    exit 1
+  fi
+
+  status_output=\$(/usr/bin/frpc status -c "${FRP_CONF}" --api-timeout "${FRPC_STATUS_TIMEOUT}" 2>&1) || {
+    printf '%s\n' "\$status_output"
+    exit 1
+  }
+
+  if [ "${FRPC_EXPECT_PROXY_STATUS:-false}" = "true" ] && ! printf '%s\n' "\$status_output" | grep -Eq '(^|[[:space:]])running([[:space:]]|$)'; then
+    printf '%s\n' "\$status_output"
+    echo "no running proxy status reported"
+    exit 1
+  fi
+
+  if printf '%s\n' "\$status_output" | grep -Eq '(^|[[:space:]])(new|wait start|start error|check failed|closed)([[:space:]]|$)'; then
+    printf '%s\n' "\$status_output"
+    exit 1
+  fi
+fi
+
+echo "ok"
+EOF
+  chmod +x /tmp/frp-healthcheck
+}
 
 start_health_server() {
   HEALTH_DIR="/tmp/health"
@@ -353,10 +449,11 @@ start_health_server() {
 
   cat > "$HEALTH_DIR/cgi-bin/health" <<HEALTHEOF
 #!/bin/sh
-if pgrep ${FRP_BIN} > /dev/null 2>&1; then
+if output=\$(/tmp/frp-healthcheck 2>&1); then
   printf 'Content-Type: text/plain\r\n\r\nok\n'
 else
-  printf 'Status: 503\r\nContent-Type: text/plain\r\n\r\n${FRP_BIN} not running\n'
+  printf 'Status: 503\r\nContent-Type: text/plain\r\n\r\n'
+  printf '%s\n' "\$output"
 fi
 HEALTHEOF
   chmod +x "$HEALTH_DIR/cgi-bin/health"
@@ -364,13 +461,109 @@ HEALTHEOF
   httpd -p "$HEALTH_PORT" -h "$HEALTH_DIR"
 }
 
+create_healthcheck
+
 if [ -n "$HEALTH_PORT" ] && [ "$HEALTH_PORT" != "0" ]; then
   start_health_server
 fi
 
-# Drop to frp user if running as root, otherwise exec directly
-if [ "$(id -u)" = "0" ]; then
-  exec su-exec frp /usr/bin/${FRP_BIN} -c ${FRP_CONF}
-else
-  exec /usr/bin/${FRP_BIN} -c ${FRP_CONF}
-fi
+start_frp_process() {
+  if [ "$(id -u)" = "0" ]; then
+    su-exec frp /usr/bin/${FRP_BIN} -c "${FRP_CONF}" &
+  else
+    /usr/bin/${FRP_BIN} -c "${FRP_CONF}" &
+  fi
+  FRP_PID="$!"
+}
+
+stop_supervised() {
+  SUPERVISOR_STOP=1
+  if [ -n "${MONITOR_PID:-}" ]; then
+    kill "$MONITOR_PID" 2>/dev/null || true
+  fi
+  if [ -n "${FRP_PID:-}" ] && kill -0 "$FRP_PID" 2>/dev/null; then
+    kill -TERM "$FRP_PID" 2>/dev/null || true
+    set +e
+    wait "$FRP_PID"
+    set -e
+  fi
+  exit 0
+}
+
+monitor_frpc_health() {
+  monitor_pid="$1"
+  failures=0
+
+  sleep "$FRPC_HEALTH_START_PERIOD"
+
+  while kill -0 "$monitor_pid" 2>/dev/null; do
+    if /tmp/frp-healthcheck > /tmp/frp-health.last 2>&1; then
+      failures=0
+    else
+      failures=$((failures + 1))
+      echo "WARN: frpc health check failed (${failures}/${FRPC_HEALTH_MAX_FAILURES})" >&2
+      cat /tmp/frp-health.last >&2 || true
+
+      if [ "$failures" -ge "$FRPC_HEALTH_MAX_FAILURES" ]; then
+        echo "WARN: restarting frpc after repeated health check failures" >&2
+        kill -TERM "$monitor_pid" 2>/dev/null || true
+        sleep "$FRPC_HEALTH_STOP_GRACE"
+        if kill -0 "$monitor_pid" 2>/dev/null; then
+          kill -KILL "$monitor_pid" 2>/dev/null || true
+        fi
+        return 0
+      fi
+    fi
+
+    sleep "$FRPC_HEALTH_INTERVAL"
+  done
+}
+
+run_supervised() {
+  trap stop_supervised INT TERM
+
+  restart_delay="$FRP_RESTART_DELAY_INITIAL"
+  SUPERVISOR_STOP=0
+
+  while :; do
+    echo "INFO: starting ${FRP_BIN}" >&2
+    start_frp_process
+
+    MONITOR_PID=""
+    if [ "$FRP_MODE" = "client" ]; then
+      monitor_frpc_health "$FRP_PID" &
+      MONITOR_PID="$!"
+    fi
+
+    set +e
+    wait "$FRP_PID"
+    exit_status="$?"
+    set -e
+
+    if [ -n "$MONITOR_PID" ]; then
+      kill "$MONITOR_PID" 2>/dev/null || true
+      set +e
+      wait "$MONITOR_PID" 2>/dev/null
+      set -e
+    fi
+
+    if [ "$SUPERVISOR_STOP" = "1" ]; then
+      exit "$exit_status"
+    fi
+
+    echo "WARN: ${FRP_BIN} exited with status ${exit_status}; restarting in ${restart_delay}s" >&2
+    sleep "$restart_delay"
+
+    if [ "$restart_delay" -lt "$FRP_RESTART_DELAY_MAX" ]; then
+      restart_delay=$((restart_delay * 2))
+      if [ "$restart_delay" -lt 1 ]; then
+        restart_delay=1
+      fi
+      if [ "$restart_delay" -gt "$FRP_RESTART_DELAY_MAX" ]; then
+        restart_delay="$FRP_RESTART_DELAY_MAX"
+      fi
+    fi
+  done
+}
+
+run_supervised

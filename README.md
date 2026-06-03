@@ -73,6 +73,8 @@ Set `FRP_MODE=client` to run as frpc. Proxy definitions are loaded from `/etc/fr
 | `TLS_KEY_B64` | No | *(unset)* | Base64-encoded TLS private key |
 | `TLS_CA_B64` | No | *(unset)* | Base64-encoded CA certificate |
 | `HEALTH_PORT` | No | `8080` | HTTP health check port (`0` to disable) |
+| `FRP_RESTART_DELAY_INITIAL` | No | `1` | Initial restart delay in seconds when frps/frpc exits |
+| `FRP_RESTART_DELAY_MAX` | No | `30` | Maximum restart backoff in seconds |
 
 ### Server mode (`FRP_MODE=server`, default)
 
@@ -104,8 +106,17 @@ Set `FRP_MODE=client` to run as frpc. Proxy definitions are loaded from `/etc/fr
 | `TLS_SERVER_NAME` | No | *(unset)* | Expected server cert CN/SAN (for TLS hostname verification) |
 | `PROXY_PROTOCOL_VERSION` | No | *(unset)* | Prepend PROXY protocol header to HTTPS backend connections (`v1` or `v2`) — enables real client IP forwarding |
 | `FRP_PROXIES_B64` | No | *(unset)* | Base64-encoded proxy definitions (decoded to `/etc/frp/conf.d/proxies.toml`) |
+| `FRPC_WEB_ADDR` | No | `127.0.0.1` | Local frpc management interface bind address for status checks |
+| `FRPC_WEB_PORT` | No | `7400` | Local frpc management interface port for status checks |
+| `FRPC_WEB_USER` | No | *(unset)* | Optional username for the local frpc management interface |
+| `FRPC_WEB_PASSWORD` | No | *(unset)* | Optional password for the local frpc management interface |
+| `FRPC_STATUS_TIMEOUT` | No | `5s` | Timeout passed to `frpc status` during health checks |
+| `FRPC_HEALTH_START_PERIOD` | No | `20` | Seconds before the supervisor starts checking frpc status |
+| `FRPC_HEALTH_INTERVAL` | No | `10` | Seconds between supervisor health checks |
+| `FRPC_HEALTH_MAX_FAILURES` | No | `3` | Consecutive failed frpc status checks before restart |
+| `FRPC_HEALTH_STOP_GRACE` | No | `5` | Seconds to wait after SIGTERM before SIGKILL when restarting frpc |
 
-By default the client probes the server every 3 seconds (via both TCP mux keepalive and application heartbeats) and declares the connection dead after 9 seconds. The hardcoded reconnect logic retries at 200ms for the first 3 attempts, then backs off exponentially up to 20 seconds. Combined with 5 pre-established pool connections, this minimizes downtime on server restarts or network blips.
+By default the client probes the server every 3 seconds (via both TCP mux keepalive and application heartbeats) and declares the connection dead after 9 seconds. The image also supervises frpc: if the process exits, it restarts with bounded backoff; if the server cannot be reached or `frpc status` reports unusable proxy state for 3 consecutive checks, the supervisor restarts frpc so it can rebuild the connection from a clean process.
 
 Proxy definitions are loaded via frp's `includes` directive from `/etc/frp/conf.d/*.toml`. Mount proxy config files there, or use `FRP_PROXIES_B64` for platforms without volume mounts.
 
@@ -302,12 +313,13 @@ frps never sees the decrypted traffic — it only reads the SNI hostname from th
 An HTTP health endpoint runs on port `8080` (configurable via `HEALTH_PORT`). Use it for platform health probes:
 
 - **URL:** `http://<container>:8080/cgi-bin/health`
-- Returns `200 OK` when frps/frpc is running, `503` otherwise
+- Server mode returns `200 OK` when frps is running, `503` otherwise
+- Client mode returns `200 OK` only when frpc is running, the frps TCP port is reachable, and `frpc status` reports usable proxy state
 - Works with mTLS since it's a separate plain HTTP server, not the frp control port
 
 For Bunny Magic Containers, set all three probes (Startup, Readiness, Liveness) to **HTTP GET** on port **8080** path `/cgi-bin/health`.
 
-Set `HEALTH_PORT=0` to disable the health server entirely.
+Set `HEALTH_PORT=0` to disable the HTTP health server. The in-container supervisor still restarts frps/frpc if the process exits, and still restarts frpc after repeated failed client status checks.
 
 ## TLS and mTLS
 
@@ -453,6 +465,8 @@ These same tests run in CI on every push — the image is only published if all 
 - Compatible with `--user` / Kubernetes `securityContext` for rootless operation
 - Dashboard disabled by default, bound to `127.0.0.1` when enabled
 - Dashboard TLS auto-enabled when server certs are mounted
+- frpc management interface bound to `127.0.0.1` by default for local status checks
+- In-container supervisor restarts frpc after process exits or repeated unhealthy proxy states
 - `detailedErrorsToClient = false` prevents info leakage
 - Config file generated at startup with `400` permissions
 - Port and env var inputs validated; strings escaped for TOML injection prevention

@@ -26,7 +26,7 @@ if ! docker volume inspect "$CERTS_VOL" > /dev/null 2>&1; then
   docker run --rm \
     -v "$CERTS_VOL":/certs \
     -v "$(cd .. && pwd)/generate-certs.sh":/generate-certs.sh:ro \
-    alpine:3.23 sh -c \
+    alpine:3.24 sh -c \
     "apk add --no-cache openssl > /dev/null 2>&1 && sh /generate-certs.sh -d /certs -b 2048 -y 1 && chown -R 1000:1000 /certs"
 fi
 

@@ -451,8 +451,8 @@ These same tests run in CI on every push — the image is only published if all 
 |---|---|
 | `latest` | Latest stable frp release |
 | `0` | Latest 0.x |
-| `0.69` | Latest 0.69.x |
-| `0.69.1` | Specific frp version |
+| `0.70` | Latest 0.70.x |
+| `0.70.1` | Specific frp version |
 
 ## Hardening
 

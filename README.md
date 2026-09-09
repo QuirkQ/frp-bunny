@@ -75,6 +75,7 @@ Set `FRP_MODE=client` to run as frpc. Proxy definitions are loaded from `/etc/fr
 | `HEALTH_PORT` | No | `8080` | HTTP health check port (`0` to disable) |
 | `FRP_RESTART_DELAY_INITIAL` | No | `1` | Initial restart delay in seconds when frps/frpc exits |
 | `FRP_RESTART_DELAY_MAX` | No | `30` | Maximum restart backoff in seconds |
+| `FRP_RESTART_RESET_AFTER` | No | `60` | Seconds a run must last before the backoff resets to its initial value (`0` = reset on every exit) |
 
 ### Server mode (`FRP_MODE=server`, default)
 
@@ -116,7 +117,7 @@ Set `FRP_MODE=client` to run as frpc. Proxy definitions are loaded from `/etc/fr
 | `FRPC_HEALTH_MAX_FAILURES` | No | `3` | Consecutive failed frpc status checks before restart |
 | `FRPC_HEALTH_STOP_GRACE` | No | `5` | Seconds to wait after SIGTERM before SIGKILL when restarting frpc |
 
-By default the client probes the server every 3 seconds (via both TCP mux keepalive and application heartbeats) and declares the connection dead after 9 seconds. The image also supervises frpc: if the process exits, it restarts with bounded backoff; if the server cannot be reached or `frpc status` reports unusable proxy state for 3 consecutive checks, the supervisor restarts frpc so it can rebuild the connection from a clean process.
+By default the client probes the server every 3 seconds (via both TCP mux keepalive and application heartbeats) and declares the connection dead after 9 seconds. The image also supervises frpc: if the process exits, it restarts with bounded backoff — reset to its initial value once a run has stayed up for `FRP_RESTART_RESET_AFTER`, so an old crash loop doesn't keep penalising a container that has since been healthy for weeks. If the server cannot be reached or `frpc status` reports unusable proxy state for 3 consecutive checks, the supervisor restarts frpc so it can rebuild the connection from a clean process.
 
 Proxy definitions are loaded via frp's `includes` directive from `/etc/frp/conf.d/*.toml`. Mount proxy config files there, or use `FRP_PROXIES_B64` for platforms without volume mounts.
 

@@ -85,6 +85,11 @@ is_uint() {
 HEALTH_PORT="${HEALTH_PORT:-8080}"
 FRP_RESTART_DELAY_INITIAL="${FRP_RESTART_DELAY_INITIAL:-1}"
 FRP_RESTART_DELAY_MAX="${FRP_RESTART_DELAY_MAX:-30}"
+# How long a run must last before it counts as healthy and earns a fresh
+# backoff. Without it the delay only ever grows, so a container that
+# crash-looped once weeks ago still pays the full FRP_RESTART_DELAY_MAX
+# on its next restart. 0 resets on every exit (backoff effectively off).
+FRP_RESTART_RESET_AFTER="${FRP_RESTART_RESET_AFTER:-60}"
 FRPC_HEALTH_INTERVAL="${FRPC_HEALTH_INTERVAL:-10}"
 FRPC_HEALTH_START_PERIOD="${FRPC_HEALTH_START_PERIOD:-20}"
 FRPC_HEALTH_MAX_FAILURES="${FRPC_HEALTH_MAX_FAILURES:-3}"
@@ -92,7 +97,7 @@ FRPC_HEALTH_STOP_GRACE="${FRPC_HEALTH_STOP_GRACE:-5}"
 FRPC_STATUS_TIMEOUT="${FRPC_STATUS_TIMEOUT:-5s}"
 
 validate_restart_settings() {
-  for var in FRP_RESTART_DELAY_INITIAL FRP_RESTART_DELAY_MAX FRPC_HEALTH_INTERVAL FRPC_HEALTH_START_PERIOD FRPC_HEALTH_MAX_FAILURES FRPC_HEALTH_STOP_GRACE; do
+  for var in FRP_RESTART_DELAY_INITIAL FRP_RESTART_DELAY_MAX FRP_RESTART_RESET_AFTER FRPC_HEALTH_INTERVAL FRPC_HEALTH_START_PERIOD FRPC_HEALTH_MAX_FAILURES FRPC_HEALTH_STOP_GRACE; do
     eval val=\$$var
     if ! is_uint "$val"; then
       echo "ERROR: $var must be a non-negative integer, got: $val" >&2
@@ -527,6 +532,7 @@ run_supervised() {
 
   while :; do
     echo "INFO: starting ${FRP_BIN}" >&2
+    run_started="$(date +%s)"
     start_frp_process
 
     MONITOR_PID=""
@@ -549,6 +555,14 @@ run_supervised() {
 
     if [ "$SUPERVISOR_STOP" = "1" ]; then
       exit "$exit_status"
+    fi
+
+    # A run that stayed up long enough to count as healthy starts the
+    # backoff over. The delay is otherwise monotonic for the life of the
+    # container: a handful of restarts pins it at FRP_RESTART_DELAY_MAX
+    # and it stays there however long the process subsequently runs.
+    if [ $(($(date +%s) - run_started)) -ge "$FRP_RESTART_RESET_AFTER" ]; then
+      restart_delay="$FRP_RESTART_DELAY_INITIAL"
     fi
 
     echo "WARN: ${FRP_BIN} exited with status ${exit_status}; restarting in ${restart_delay}s" >&2

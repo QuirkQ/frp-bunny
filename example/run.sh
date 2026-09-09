@@ -10,11 +10,20 @@ fi
 
 CERTS_VOL="example_certs"
 
+# test.sh repoints frps.test.internal by rewriting dns/hosts in place —
+# that rewrite is the re-resolution test. Stash the original so a run
+# doesn't leave the working tree dirty, and so the next run starts from
+# the black hole address again rather than passing vacuously.
+HOSTS_BACKUP="$(mktemp)"
+cp dns/hosts "$HOSTS_BACKUP"
+
 cleanup() {
   echo ""
   echo "Cleaning up..."
   docker compose down --remove-orphans 2>/dev/null || true
   docker volume rm "$CERTS_VOL" 2>/dev/null || true
+  cp "$HOSTS_BACKUP" dns/hosts
+  rm -f "$HOSTS_BACKUP"
 }
 trap cleanup EXIT
 

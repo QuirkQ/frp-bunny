@@ -1,6 +1,16 @@
+# Zone data lives in ./hosts rather than inline here so test.sh can
+# repoint a name while the stack is running. The directory (not the
+# individual files) is what compose mounts into CoreDNS, so an in-place
+# rewrite that replaces the inode is still visible in here.
+#
+# ttl 1 + reload 1s keep a repoint visible almost immediately. The TTL
+# is the part that matters: it caps how long anything between CoreDNS
+# and frpc — Docker's embedded resolver included — may serve the old
+# answer, and a stale answer would look like frpc failing to re-resolve.
 test.internal {
-    hosts {
-        172.20.0.10 app.test.internal
+    hosts /etc/coredns/hosts test.internal {
+        ttl 1
+        reload 1s
         fallthrough
     }
     log

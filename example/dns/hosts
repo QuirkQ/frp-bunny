@@ -1,0 +1,14 @@
+# Zone data for test.internal, served by CoreDNS's hosts plugin and
+# rewritten mid-run by test.sh.
+#
+# app.test.internal is the public name a visitor dials: it points at
+# frps's public-network address, where the SNI vhost listens.
+172.20.0.10 app.test.internal
+
+# frps.test.internal is what frpc dials for its control connection, on
+# the tunnel network. It deliberately starts at an address nothing
+# listens on. test.sh repoints it at the real frps and requires the
+# chain to come up without anyone touching frpc — which is the property
+# a hostname-based SERVER_ADDR rests on: when the server's address
+# changes, updating DNS has to be enough.
+172.20.1.99 frps.test.internal
